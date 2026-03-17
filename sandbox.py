@@ -9,6 +9,8 @@ Controls:
 import pygame, random, math, sys
 import numpy as np
 from typing import Any, Optional, Dict, List
+from elements import *
+from elements import _BIOME_WEATHER
 
 WIDTH, HEIGHT = 960, 720
 CELL = 4
@@ -17,281 +19,39 @@ COLS = (WIDTH * WORLD_MULT)  // CELL
 ROWS = (HEIGHT * WORLD_MULT) // CELL
 FPS  = 60
 
-# ── Element IDs ───────────────────────────────────────────────────────────────
-(EMPTY, SAND, WATER, WOOD, FIRE, STONE, LAVA, SMOKE, STEAM, ACID,
- PLANT, CLOUD, DIRT, SAPLING, LEAF, OIL, ICE, ANIMAL, SNOW, GUNPOWDER,
- GLASS, MUD, VINE, EMBER, SALT, FUNGUS, LIGHTNING, OBSIDIAN, CRYSTAL,
- CHARCOAL, RUST, WETDIRT, ASH, PRESSGAS, MAGMA,
- SLIME, TAR, CONCRETE, CEMENT, GOLD, GRAVEL, MOSS, HONEY, WAX,
- POISON, SEED, RUBBER, WIRE, CHARGED, BUBBLE, SPORE,
- MERCURY, NEON, PLASMA, CLAY, CERAMIC, RESIN, BASALT,
- PEAT, SEAWEED, JELLYFISH, CORAL, SANDSTONE, AIR,
- METHANE, NITRO, QUICKSAND, STEEL, SUGAR, URANIUM, VOID,
- BIRD, FISH, PREDATOR, HUMAN, HYDROGEN, SULFUR, HELIUM, COAL, COPPER,
- TIGER, LION, WHALE, DOLPHIN,
- WHEAT, APPLE, BERRY, BREAD, MEAT,
- BEAR, SNAKE, RABBIT, SPIDER, BEE, FROG, WEB,
- MUSHROOM, CORN, CARROT, COOKED_MEAT, DOUGH,
-) = range(101)
+# current_biome is set by each gen_* function
+current_biome = None
 
-# Animal-type set for sidebar filtering
-ANIMAL_TYPES = None   # filled after all IDs defined (below)
+# All element data (IDs, COLORS, NAMES, ANIMAL_TYPES, ELEMENT_LIST,
+# DENSITY, FLAMMABLE, CONDUCT, HAZARDS, LIQUIDS, STATIC_SOLIDS, GROUND_SOLIDS,
+# hx, cc, blend, darken, lighten) imported from elements.py above.
 
-# ── Hex → RGB helper ──────────────────────────────────────────────────────────
-def hx(h):
-    """Convert '#rrggbb' string to (r,g,b) tuple."""
-    h = h.lstrip('#')
-    return (int(h[0:2],16), int(h[2:4],16), int(h[4:6],16))
+hotbar = [SAND, WATER, FIRE, STONE, PLANT, OIL, GUNPOWDER, ACID, LAVA]
 
-def cc(r,g,b):
-    return (max(0,min(255,int(r))), max(0,min(255,int(g))), max(0,min(255,int(b))))
-
-def blend(c1, c2, t):
-    """Linear-interpolate between two (r,g,b) colours. t=0→c1, t=1→c2."""
-    t = max(0.0, min(1.0, t))
-    return cc(c1[0]+(c2[0]-c1[0])*t, c1[1]+(c2[1]-c1[1])*t, c1[2]+(c2[2]-c1[2])*t)
-
-def darken(c, amount):
-    return cc(c[0]-amount, c[1]-amount, c[2]-amount)
-
-def lighten(c, amount):
-    return cc(c[0]+amount, c[1]+amount, c[2]+amount)
-
-# ── Base palette (all hex) ────────────────────────────────────────────────────
-COLORS = {
-    EMPTY:      hx('#0c0c10'),
-    AIR:        hx('#141620'),
-    SAND:       hx('#d4a96a'),
-    WATER:      hx('#1e6fcc'),
-    WOOD:       hx('#5c3318'),
-    FIRE:       hx('#e8520a'),
-    STONE:      hx('#6e6e72'),
-    LAVA:       hx('#cc3a06'),
-    SMOKE:      hx('#484852'),
-    STEAM:      hx('#c8cdd8'),
-    ACID:       hx('#5ef01a'),
-    PLANT:      hx('#1e8c1e'),
-    CLOUD:      hx('#d0d4e8'),
-    DIRT:       hx('#4a2e0e'),
-    SAPLING:    hx('#62b840'),
-    LEAF:       hx('#157020'),
-    OIL:        hx('#1a1408'),
-    ICE:        hx('#a8d8f8'),
-    ANIMAL:     hx('#c09070'),
-    SNOW:       hx('#eef2ff'),
-    GUNPOWDER:  hx('#363638'),
-    GLASS:      hx('#b4d8e8'),
-    MUD:        hx('#5a3c1c'),
-    VINE:       hx('#0e6414'),
-    EMBER:      hx('#ff8c0a'),
-    SALT:       hx('#f8f8f8'),
-    FUNGUS:     hx('#a060c0'),
-    LIGHTNING:  hx('#fffff0'),
-    OBSIDIAN:   hx('#180e24'),
-    CRYSTAL:    hx('#80d8ff'),
-    CHARCOAL:   hx('#1e1818'),
-    RUST:       hx('#7a3208'),
-    WETDIRT:    hx('#2e1c08'),
-    ASH:        hx('#888078'),
-    PRESSGAS:   hx('#90d890'),
-    MAGMA:      hx('#b81800'),
-    SLIME:      hx('#40b840'),
-    TAR:        hx('#0c0800'),
-    CONCRETE:   hx('#8c8880'),
-    CEMENT:     hx('#b0a898'),
-    GOLD:       hx('#ffc000'),
-    GRAVEL:     hx('#706860'),
-    MOSS:       hx('#286828'),
-    HONEY:      hx('#cc8800'),
-    WAX:        hx('#fff0c0'),
-    POISON:     hx('#50d020'),
-    SEED:       hx('#a07840'),
-    RUBBER:     hx('#181818'),
-    WIRE:       hx('#a84808'),
-    CHARGED:    hx('#ffe020'),
-    BUBBLE:     hx('#a8d8ff'),
-    SPORE:      hx('#c8a8d8'),
-    MERCURY:    hx('#b0c0d0'),
-    NEON:       hx('#d040ff'),
-    PLASMA:     hx('#b060ff'),
-    CLAY:       hx('#9c6040'),
-    CERAMIC:    hx('#d0c0a0'),
-    RESIN:      hx('#c09020'),
-    BASALT:     hx('#302830'),
-    PEAT:       hx('#402810'),
-    SEAWEED:    hx('#106030'),
-    JELLYFISH:  hx('#d8c0f0'),
-    CORAL:      hx('#e05040'),
-    SANDSTONE:  hx('#c8a868'),
-    METHANE:    hx('#b0e8b0'),
-    NITRO:      hx('#e8e060'),
-    QUICKSAND:  hx('#c88848'),
-    STEEL:      hx('#7090b0'),
-    SUGAR:      hx('#f4eee4'),
-    URANIUM:    hx('#40d830'),
-    VOID:       hx('#100018'),
-    # ── Animal sub-types ───────────────────────────────────────────────────────
-    BIRD:       hx('#f0d880'),
-    FISH:       hx('#4090d0'),
-    PREDATOR:   hx('#a04828'),
-    HUMAN:      hx('#f0c090'),
-    TIGER:      hx('#d87820'),
-    LION:       hx('#c8a040'),
-    WHALE:      hx('#304878'),
-    DOLPHIN:    hx('#5090c0'),
-    # ── Food items ─────────────────────────────────────────────────────────────
-    WHEAT:      hx('#e8c840'),
-    APPLE:      hx('#d83020'),
-    BERRY:      hx('#8830c0'),
-    BREAD:      hx('#c88840'),
-    MEAT:       hx('#a02818'),
-    # ── Real element replacements ──────────────────────────────────────────────
-    HYDROGEN:   hx('#d8f4ff'),
-    SULFUR:     hx('#d4c820'),
-    HELIUM:     hx('#f0f8e8'),
-    COAL:       hx('#1c1818'),
-    COPPER:     hx('#b86020'),
-    BEAR:       hx('#604020'),
-    SNAKE:      hx('#30cc30'),
-    RABBIT:     hx('#e0e0e0'),
-    SPIDER:     hx('#1a1a1a'),
-    BEE:        hx('#ffcc00'),
-    FROG:       hx('#40a040'),
-    WEB:        hx('#ffffff'),
-    MUSHROOM:   hx('#c89060'),
-    CORN:       hx('#f0d040'),
-    CARROT:     hx('#f07820'),
-    COOKED_MEAT:hx('#803010'),
-    DOUGH:      hx('#f0e0c0'),
+# ── Human gifting ─────────────────────────────────────────────────────────────
+# Elements that can be "given" to a human by clicking directly on them.
+# Harmful items (FIRE, ACID, POISON) are also giftable but hurt the human.
+_GIVEABLE_TO_HUMAN = {
+    # Food
+    BREAD, APPLE, BERRY, MEAT, COOKED_MEAT, CORN, CARROT, MUSHROOM,
+    WHEAT, HONEY, SUGAR, DOUGH, FUNGUS, SEAWEED, PLANT, MOSS, SEED, LEAF,
+    # Drink
+    WATER, ICE,
+    # Valuables → inventory
+    GOLD, COPPER, CRYSTAL, COAL,
+    # Knowledge
+    BOOK,
+    # Building materials → blocks
+    WOOD, STONE, GRAVEL, SAND, CLAY, CHARCOAL, SANDSTONE,
+    # Harmful
+    POISON, FIRE, ACID, LAVA,
 }
 
-NAMES = {
-    EMPTY:"Eraser",SAND:"Sand",WATER:"Water",WOOD:"Wood",
-    FIRE:"Fire",STONE:"Stone",LAVA:"Lava",ACID:"Acid",
-    PLANT:"Grass",CLOUD:"Cloud",DIRT:"Dirt",SAPLING:"Sapling",
-    OIL:"Oil",ICE:"Ice",LEAF:"Leaf",ANIMAL:"Animal",
-    SNOW:"Snow",GUNPOWDER:"Gunpowder",GLASS:"Glass",MUD:"Mud",
-    VINE:"Vine",EMBER:"Ember",SALT:"Salt",FUNGUS:"Fungus",
-    LIGHTNING:"Lightning",OBSIDIAN:"Obsidian",CRYSTAL:"Crystal",
-    CHARCOAL:"Charcoal",RUST:"Rust",WETDIRT:"WetDirt",
-    ASH:"Ash",PRESSGAS:"PressGas",MAGMA:"Magma",
-    SLIME:"Slime",TAR:"Tar",CONCRETE:"Concrete",CEMENT:"Cement",
-    GOLD:"Gold",GRAVEL:"Gravel",MOSS:"Moss",HONEY:"Honey",
-    WAX:"Wax",POISON:"Poison",SEED:"Seed",RUBBER:"Rubber",
-    WIRE:"Wire",CHARGED:"Charged",BUBBLE:"Bubble",SPORE:"Spore",
-    MERCURY:"Mercury",NEON:"Neon",PLASMA:"Plasma",
-    CLAY:"Clay",CERAMIC:"Ceramic",RESIN:"Resin",BASALT:"Basalt",
-    PEAT:"Peat",SEAWEED:"Seaweed",JELLYFISH:"Jellyfish",
-    CORAL:"Coral",SANDSTONE:"Sandstone",AIR:"Air",
-    SMOKE:"Smoke",STEAM:"Steam",
-    METHANE:"Methane",NITRO:"Nitro",QUICKSAND:"Quicksand",
-    STEEL:"Steel",SUGAR:"Sugar",URANIUM:"Uranium",VOID:"Void",
-    BIRD:"Bird",FISH:"Fish",PREDATOR:"Wolf",HUMAN:"Human",
-    TIGER:"Tiger",LION:"Lion",WHALE:"Whale",DOLPHIN:"Dolphin",
-    WHEAT:"Wheat",APPLE:"Apple",BERRY:"Berry",BREAD:"Bread",MEAT:"Meat",
-    HYDROGEN:"Hydrogen",SULFUR:"Sulfur",HELIUM:"Helium",
-    COAL:"Coal",COPPER:"Copper",
-    BEAR:"Bear", SNAKE:"Snake", RABBIT:"Rabbit", SPIDER:"Spider",
-    BEE:"Bee", FROG:"Frog", WEB:"Web",
-    MUSHROOM:"Mushroom", CORN:"Corn", CARROT:"Carrot",
-    COOKED_MEAT:"CookedMeat", DOUGH:"Dough",
-}
-
-ANIMAL_TYPES = {ANIMAL, BIRD, FISH, PREDATOR, HUMAN, TIGER, LION, WHALE, DOLPHIN,
-                BEAR, SNAKE, RABBIT, SPIDER, BEE, FROG}
-
-ELEMENT_LIST = [
-    # Eraser
-    EMPTY,
-    # Powders / grains
-    SAND, DIRT, GRAVEL, SALT, GUNPOWDER, SUGAR, SULFUR, COAL,
-    # Liquids
-    WATER, LAVA, ACID, OIL, HONEY, SLIME, TAR, MERCURY, MUD, WETDIRT, NITRO,
-    # Gases
-    STEAM, SMOKE, METHANE, HYDROGEN, AIR, CLOUD,
-    # Solids / terrain
-    STONE, WOOD, GLASS, CONCRETE, CEMENT, OBSIDIAN, BASALT, SANDSTONE,
-    CLAY, CERAMIC, CHARCOAL, PEAT, RUST,
-    # Valuables
-    GOLD, COPPER, STEEL, CRYSTAL, WIRE, RUBBER, WAX, RESIN,
-    # Biology / food
-    PLANT, LEAF, VINE, MOSS, SEED, SAPLING, FUNGUS, SEAWEED,
-    MUSHROOM, CORN, CARROT, COOKED_MEAT, DOUGH,
-    WHEAT, APPLE, BERRY, BREAD, MEAT,
-    # Animals
-    ANIMAL, BIRD, FISH, PREDATOR, HUMAN, TIGER, LION, WHALE, DOLPHIN,
-    BEAR, SNAKE, RABBIT, SPIDER, BEE, FROG, WEB,
-    # Natural reactive / special
-    FIRE, ICE, SNOW, EMBER, MAGMA, URANIUM, QUICKSAND,
-    JELLYFISH, CORAL, POISON, LIGHTNING,
-]
-
-
-# ── Physics tables ────────────────────────────────────────────────────────────
-DENSITY = {
-    EMPTY:0, LIGHTNING:0, CHARGED:0,
-    AIR:1.2, NEON:0.9, PLASMA:0.01,
-    SMOKE:0.6, STEAM:0.6, PRESSGAS:1.2, POISON:1.5,
-    CLOUD:0.5, EMBER:50, FIRE:0.3, BUBBLE:0.1,
-    ASH:570, SNOW:100, LEAF:200, SPORE:30,
-    OIL:800, RESIN:1050, HONEY:1420, SLIME:1200,
-    WATER:1000, ACID:1200, MERCURY:13534,
-    VINE:400, SEAWEED:1030, FUNGUS:300, PLANT:400,
-    SAPLING:600, SEED:850, JELLYFISH:1050, ANIMAL:985,
-    ICE:917, RUBBER:920, CLAY:1800,
-    WETDIRT:1600, MUD:1500, SAND:1600, DIRT:1400, SALT:2165,
-    GRAVEL:1680, PEAT:400, GUNPOWDER:1700,
-    CHARCOAL:400, SANDSTONE:2300, RUST:5240, CRYSTAL:2650,
-    GLASS:2500, CORAL:2700,
-    TAR:1070, WAX:900, WOOD:700, STONE:2600, MOSS:400,
-    WIRE:7850, CONCRETE:2400, CEMENT:3150, CERAMIC:2300,
-    LAVA:2700, MAGMA:2800, GOLD:19300, BASALT:3000, OBSIDIAN:2350,
-    METHANE:0.7, NITRO:1600, QUICKSAND:1550, STEEL:7800,
-    SUGAR:1580, URANIUM:19050, VOID:0,
-    BIRD:0.9, FISH:1010, PREDATOR:980, HUMAN:970,
-    TIGER:1000, LION:1005, WHALE:1015, DOLPHIN:1008,
-    WHEAT:500, APPLE:600, BERRY:400, BREAD:700, MEAT:950,
-    HYDROGEN:0.09, SULFUR:2070, HELIUM:0.18, COAL:1400, COPPER:8960,
-    BEAR:1200, SNAKE:900, RABBIT:600, SPIDER:200, BEE:10, FROG:800, WEB:50
-}
-
-FLAMMABLE = {
-    OIL:0.85, GUNPOWDER:0.99, WOOD:0.15, CHARCOAL:0.25,
-    LEAF:0.45, PLANT:0.35, VINE:0.30, SAPLING:0.35,
-    ANIMAL:0.08, FUNGUS:0.20, TAR:0.90,
-    SLIME:0.05, WAX:0.35, HONEY:0.10, RUBBER:0.40,
-    MOSS:0.35, SEED:0.30, PEAT:0.60, RESIN:0.75, SEAWEED:0.15,
-    METHANE:0.95, SUGAR:0.55, NITRO:0.99,
-    HYDROGEN:0.97, SULFUR:0.30, COAL:0.18, BIRD:0.05, HUMAN:0.04,
-    TIGER:0.06, LION:0.06,
-    WHEAT:0.55, BREAD:0.12, MEAT:0.15,
-}
-
-CONDUCT = {
-    WATER:0.6, ICE:2.2, STONE:3.0, SAND:0.25, WOOD:0.15,
-    CHARCOAL:0.08, LAVA:1.5, MAGMA:2.0, GLASS:1.0, DIRT:0.25,
-    MUD:0.5, WETDIRT:0.8, GOLD:310.0, MERCURY:8.3,
-    CONCRETE:1.7, TAR:0.17, RUBBER:0.13, WAX:0.25,
-    CLAY:0.25, CERAMIC:1.5, BASALT:2.0, SANDSTONE:2.3,
-    WIRE:80.0, OBSIDIAN:1.2, CRYSTAL:2.5,
-    AIR:0.024, EMPTY:0.024,
-    SMOKE:0.026, STEAM:0.016, NEON:0.049, PLASMA:0.1,
-    HYDROGEN:0.18, HELIUM:0.15, SULFUR:0.27, COAL:0.26, COPPER:380.0,
-    BIRD:0.024, FISH:0.58, PREDATOR:0.2, HUMAN:0.2,
-    TIGER:0.21, LION:0.21, WHALE:0.6, DOLPHIN:0.6,
-}
-
-HAZARDS = {FIRE, LAVA, ACID, MAGMA, NITRO}   # elements that damage/kill animals
-
-LIQUIDS      = {WATER, ACID, LAVA, OIL, HONEY, SLIME, TAR, MERCURY, POISON, MAGMA, MUD, WETDIRT, NITRO}
-STATIC_SOLIDS= {STONE, WOOD, GLASS, CONCRETE, CEMENT, OBSIDIAN, BASALT, CERAMIC, SANDSTONE, STEEL, COPPER, WEB}
-GROUND_SOLIDS= {STONE, DIRT, SAND, GRAVEL, WETDIRT, MUD, WOOD, CONCRETE, CEMENT, BASALT,
-                SANDSTONE, OBSIDIAN, COAL, COPPER, STEEL, CERAMIC, CHARCOAL, PEAT, RUST,
-                CRYSTAL, GLASS, WAX, RUBBER, RESIN, GOLD, WIRE, CLAY, SALT, GUNPOWDER,
-                SUGAR, SULFUR, QUICKSAND, ICE, CORAL}
+_gift_msgs: list = []   # [(sx, sy, text, color, frames_left)]
 
 # ── Pygame init ───────────────────────────────────────────────────────────────
 pygame.init()
+_fullscreen = False
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Elemental Sandbox v4.3")
 clock  = pygame.time.Clock()
@@ -371,6 +131,16 @@ sun_ang: float    = 0.0
 paused: bool      = False
 frame_t: int      = 0   # global tick counter for animations
 zoom_level: float = 1.0
+sim_speed: int    = 1          # simulation ticks per frame (1-6)
+show_grid: bool   = False      # toggle grid line overlay
+show_stats: bool  = False      # toggle element count overlay
+fps_val: float    = 0.0        # live FPS counter
+eruption_on: bool = False      # volcanic eruption active
+eruption_t: int   = 0
+sandstorm: bool   = False      # sandstorm weather active
+sandstorm_t: int  = 0
+_undo_buf: list   = []         # [(x,y,el,li,da,ge)] for CTRL+Z undo
+_in_stroke: bool  = False      # True while mouse button is held
 cam_offset_x: float = -(WIDTH * WORLD_MULT - WIDTH) / 2.0
 cam_offset_y: float = -(HEIGHT * WORLD_MULT - HEIGHT) / 2.0
 
@@ -487,6 +257,8 @@ def clear_weather():
     global tornado_on,tornado_life,wind_x,fog_on,fog_t,heatwave,heatwave_t,acid_rain,acidrain_t
     raining=snowing=storming=blizzard=fog_on=heatwave=tornado_on=acid_rain=False
     storm_t=blizzard_t=fog_t=heatwave_t=tornado_life=acidrain_t=0; wind_x=0.0
+    global eruption_on, eruption_t, sandstorm, sandstorm_t
+    eruption_on=False; eruption_t=0; sandstorm=False; sandstorm_t=0
 
 def toggle_rain():
     global raining,snowing
@@ -523,6 +295,31 @@ def trigger_heatwave():
 def trigger_acid_rain():
     global acid_rain,acidrain_t,raining
     acid_rain=True; acidrain_t=random.randint(300,600); raining=False
+
+def trigger_eruption():
+    global eruption_on, eruption_t
+    eruption_on=True; eruption_t=random.randint(300,600)
+
+def trigger_sandstorm():
+    global sandstorm, sandstorm_t, wind_x
+    sandstorm=True; sandstorm_t=random.randint(400,900)
+    wind_x=random.choice([-9.0, 9.0])
+
+def day_faster():
+    global DAY_LEN
+    DAY_LEN=max(1800, DAY_LEN-1800)
+
+def day_slower():
+    global DAY_LEN
+    DAY_LEN=min(43200, DAY_LEN+1800)
+
+def speed_up():
+    global sim_speed
+    sim_speed=min(6, sim_speed+1)
+
+def speed_down():
+    global sim_speed
+    sim_speed=max(1, sim_speed-1)
 
 def raise_temp():
     global temperature
@@ -576,6 +373,14 @@ def zoom_out(px=None, py=None):
     if py is None: py = HEIGHT//2
     idx = next((i for i,z in enumerate(reversed(_ZOOM_STEPS)) if z < zoom_level), len(_ZOOM_STEPS)-1)
     _zoom_toward(_ZOOM_STEPS[max(0, len(_ZOOM_STEPS)-1-idx)], px, py)
+
+def toggle_fullscreen():
+    global _fullscreen, screen
+    _fullscreen = not _fullscreen
+    if _fullscreen:
+        screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.FULLSCREEN)
+    else:
+        screen = pygame.display.set_mode((WIDTH, HEIGHT))
 
 def pan_left():
     global cam_offset_x
@@ -640,6 +445,12 @@ buttons=[
     Button(10,R3,100,22,"Elements",'#183860','#2858a0',toggle_sidebar),
     Button(120,R3,40,22,"Z+",'#408040','#50a050',zoom_in),
     Button(165,R3,40,22,"Z-",'#804040','#a05050',zoom_out),
+    Button(210,R3,36,22,"Sp+",'#206040','#30a060',speed_up),
+    Button(250,R3,36,22,"Sp-",'#604020','#a06030',speed_down),
+    Button(290,R3,50,22,"Erupt",'#601008','#b02018',trigger_eruption),
+    Button(344,R3,70,22,"Sandstrm",'#784020','#c06830',trigger_sandstorm),
+    Button(418,R3,32,22,"D+",'#406820','#60a030',day_faster),
+    Button(454,R3,32,22,"D-",'#182060','#2838a0',day_slower),
 ]
 
 # ── Bounds / swap ─────────────────────────────────────────────────────────────
@@ -824,6 +635,25 @@ def update_steam(x,y):
         if inb(x+dx,y) and grid[x+dx][y] in (EMPTY,AIR): swap(x,y,x+dx,y); return
 
 def update_water(x,y):
+    # ── Rain drop behaviour: absorb into ground, fertilize dirt ─────────────
+    if life[x][y] < 0:   # marked as a rain drop at spawn
+        if inb(x, y+1):
+            below = grid[x][y+1]
+            if below not in (EMPTY, AIR, WATER, STEAM, CLOUD, ICE):
+                # Hit ground: turn dirt/sand to wet dirt, then vanish
+                if below in (DIRT, SAND, GRAVEL):
+                    grid[x][y+1] = WETDIRT
+                elif below == WETDIRT:
+                    # Already wet — nudge nearby plant growth by bumping temp slightly
+                    for _dx,_dy in [(-1,0),(1,0),(0,1)]:
+                        _nx,_ny = x+_dx, y+_dy
+                        if inb(_nx,_ny) and grid[_nx][_ny] in (PLANT,SEED,SAPLING):
+                            temp_g[_nx][_ny] = max(temp_g[_nx][_ny], 22.0)
+                grid[x][y] = EMPTY
+                return
+        # Still falling as rain — convert to normal water after 3 rows
+        if y > 3:
+            life[x][y] = random.randint(60, 120)
     if temp_g[x][y]<0 and random.random()<0.01: grid[x][y]=ICE; return
     if temp_g[x][y]>100 and random.random()<0.04: grid[x][y]=STEAM; life[x][y]=random.randint(60,120); return
     if inb(x,y+1):
@@ -840,6 +670,12 @@ def update_water(x,y):
     for dx,dy in [(-1,0),(1,0),(0,-1),(0,1)]:
         nx,ny=x+dx,y+dy
         if inb(nx,ny) and grid[nx][ny]==SALT and random.random()<0.015: grid[nx][ny]=EMPTY
+    # Slowly erode stone into gravel
+    if random.random()<0.0003:
+        for dx,dy in [(-1,0),(1,0),(0,1)]:
+            nx,ny=x+dx,y+dy
+            if inb(nx,ny) and grid[nx][ny]==STONE:
+                grid[nx][ny]=GRAVEL; break
 
 def update_lava(x,y):
     temp_g[x][y]=max(700.0,temp_g[x][y])
@@ -861,6 +697,57 @@ def update_lava(x,y):
         if inb(x+dx,y+1) and grid[x+dx][y+1] in (EMPTY,AIR): swap(x,y,x+dx,y+1); return
     for dx in dirs:
         if inb(x+dx,y) and grid[x+dx][y] in (EMPTY,AIR): swap(x,y,x+dx,y); return
+
+# ── Parametric powder updater ─────────────────────────────────────────────────
+# POWDER_CFG: {el: (has_wind, water_react, burn_react)}
+#   water_react = (water_el, result_el, chance) or None
+#   burn_react  = (trigger_els_tuple, result_el, life_range, temp) or None
+POWDER_CFG = {
+    SAND:      (True,  (WATER, WETDIRT, 0.002), None),
+    DIRT:      (False, (WATER, WETDIRT, 0.010), None),
+    GRAVEL:    (False, None,                    None),
+    SALT:      (False, (WATER, EMPTY,   0.018), None),
+    CHARCOAL:  (False, None, ((FIRE,EMBER,LAVA,MAGMA), FIRE, (200,500), 400.0)),
+    RUST:      (False, None,                    None),
+    PEAT:      (False, None, ((FIRE,EMBER),      FIRE, (200,500), 300.0)),
+    COAL:      (False, None, ((FIRE,EMBER,LAVA,MAGMA), FIRE, (500,1100), 900.0)),
+}
+
+def _update_powder_generic(x, y):
+    el = grid[x][y]
+    cfg = POWDER_CFG.get(el, (False, None, None))
+    has_wind, water_r, burn_r = cfg
+    if has_wind and wind_x != 0 and random.random() < abs(wind_x)*0.035:
+        wx = 1 if wind_x > 0 else -1
+        if inb(x+wx,y) and grid[x+wx][y] in (EMPTY,AIR): swap(x,y,x+wx,y); return
+    if inb(x,y+1) and can_powder_fall(grid[x][y+1]): swap(x,y,x,y+1); return
+    dirs = [-1,1]; random.shuffle(dirs)
+    for dx in dirs:
+        if inb(x+dx,y+1) and can_powder_fall(grid[x+dx][y+1]): swap(x,y,x+dx,y+1); return
+    if water_r:
+        w_src, w_dst, w_ch = water_r
+        for dx,dy in [(-1,0),(1,0),(0,-1),(0,1)]:
+            nx,ny = x+dx, y+dy
+            if inb(nx,ny) and grid[nx][ny] == w_src and random.random() < w_ch:
+                if w_dst == WETDIRT:
+                    grid[x][y] = WETDIRT; grid[nx][ny] = EMPTY
+                elif w_dst == EMPTY:
+                    grid[x][y] = EMPTY
+                return
+    if burn_r:
+        b_trg, b_dst, b_life, b_temp = burn_r
+        flam = FLAMMABLE.get(el, 0.1)
+        for dx,dy in [(-1,0),(1,0),(0,-1),(0,1)]:
+            nx,ny = x+dx, y+dy
+            if inb(nx,ny) and grid[nx][ny] in b_trg and random.random() < flam*0.05:
+                grid[x][y] = b_dst
+                life[x][y] = random.randint(*b_life)
+                temp_g[x][y] = b_temp
+                return
+
+# Alias simple powder elements to the generic updater
+update_gravel   = _update_powder_generic
+update_rust     = _update_powder_generic
 
 def update_sand(x,y):
     if wind_x!=0 and random.random()<abs(wind_x)*0.035:
@@ -957,14 +844,7 @@ def update_salt(x,y):
         nx,ny=x+dx,y+dy
         if inb(nx,ny) and grid[nx][ny]==WATER and random.random()<0.018: grid[x][y]=EMPTY; return
 
-def update_dirt(x,y):
-    if inb(x,y+1) and can_powder_fall(grid[x][y+1]): swap(x,y,x,y+1); return
-    dirs=[-1,1]; random.shuffle(dirs)
-    for dx in dirs:
-        if inb(x+dx,y+1) and can_powder_fall(grid[x+dx][y+1]): swap(x,y,x+dx,y+1); return
-    for dx,dy in [(-1,0),(1,0),(0,-1),(0,1)]:
-        nx,ny=x+dx,y+dy
-        if inb(nx,ny) and grid[nx][ny]==WATER and random.random()<0.01: grid[x][y]=WETDIRT; grid[nx][ny]=EMPTY; return
+update_dirt = _update_powder_generic
 
 def update_wetdirt(x,y):
     if temp_g[x][y]>38 and random.random()<0.003: grid[x][y]=DIRT; return
@@ -1143,11 +1023,7 @@ def update_spore(x,y):
         ny=y+(-1 if random.random()<0.6 else 1); nx=x+random.choice([-1,0,1])
         if inb(nx,ny) and grid[nx][ny] in (EMPTY,AIR): swap(x,y,nx,ny)
 
-def update_gravel(x,y):
-    if inb(x,y+1) and can_powder_fall(grid[x][y+1]): swap(x,y,x,y+1); return
-    dirs=[-1,1]; random.shuffle(dirs)
-    for dx in dirs:
-        if inb(x+dx,y+1) and can_powder_fall(grid[x+dx][y+1]): swap(x,y,x+dx,y+1); return
+# update_gravel is now aliased to _update_powder_generic above
 
 def update_clay(x,y):
     if inb(x,y+1) and grid[x][y+1] in (EMPTY,AIR): swap(x,y,x,y+1); return
@@ -1171,14 +1047,7 @@ def update_wax(x,y):
         nx,ny=x+dx,y+dy
         if inb(nx,ny) and grid[nx][ny]==FIRE and random.random()<FLAMMABLE.get(WAX,0)*0.08: grid[x][y]=FIRE; life[x][y]=random.randint(150,300); return
 
-def update_peat(x,y):
-    if inb(x,y+1) and can_powder_fall(grid[x][y+1]): swap(x,y,x,y+1); return
-    dirs=[-1,1]; random.shuffle(dirs)
-    for dx in dirs:
-        if inb(x+dx,y+1) and can_powder_fall(grid[x+dx][y+1]): swap(x,y,x+dx,y+1); return
-    for dx,dy in [(-1,0),(1,0),(0,-1),(0,1)]:
-        nx,ny=x+dx,y+dy
-        if inb(nx,ny) and grid[nx][ny] in (FIRE,EMBER) and random.random()<FLAMMABLE.get(PEAT,0)*0.04: grid[x][y]=FIRE; life[x][y]=random.randint(200,500); return
+update_peat = _update_powder_generic
 
 def update_seaweed(x,y):
     if inb(x,y-1) and grid[x][y-1]==WATER and random.random()<0.001: grid[x][y-1]=SEAWEED
@@ -1247,20 +1116,9 @@ def update_air_cell(x,y):
         dx2=random.choice([-1,0,1]); dy2=-1 if random.random()<0.6 else 0
         if inb(x+dx2,y+dy2) and grid[x+dx2][y+dy2]==EMPTY: swap(x,y,x+dx2,y+dy2)
 
-def update_charcoal(x,y):
-    if inb(x,y+1) and can_powder_fall(grid[x][y+1]): swap(x,y,x,y+1); return
-    dirs=[-1,1]; random.shuffle(dirs)
-    for dx in dirs:
-        if inb(x+dx,y+1) and can_powder_fall(grid[x+dx][y+1]): swap(x,y,x+dx,y+1); return
-    for dx,dy in [(-1,0),(1,0),(0,-1),(0,1)]:
-        nx,ny=x+dx,y+dy
-        if inb(nx,ny) and grid[nx][ny] in (FIRE,LAVA,EMBER) and random.random()<FLAMMABLE[CHARCOAL]*0.05: grid[x][y]=FIRE; life[x][y]=random.randint(200,500); return
+update_charcoal = _update_powder_generic
 
-def update_rust(x,y):
-    if inb(x,y+1) and can_powder_fall(grid[x][y+1]): swap(x,y,x,y+1); return
-    dirs=[-1,1]; random.shuffle(dirs)
-    for dx in dirs:
-        if inb(x+dx,y+1) and can_powder_fall(grid[x+dx][y+1]): swap(x,y,x+dx,y+1); return
+# update_rust is now aliased to _update_powder_generic above
 
 def update_sandstone(x,y):
     for dx,dy in [(-1,0),(1,0)]:
@@ -1471,15 +1329,7 @@ def update_helium(x,y):
         nx,ny=x+dx,y+dy
         if inb(nx,ny) and grid[nx][ny] in (EMPTY,AIR): swap(x,y,nx,ny); return
 
-def update_coal(x,y):
-    if inb(x,y+1) and can_powder_fall(grid[x][y+1]): swap(x,y,x,y+1); return
-    dirs=[-1,1]; random.shuffle(dirs)
-    for dx in dirs:
-        if inb(x+dx,y+1) and can_powder_fall(grid[x+dx][y+1]): swap(x,y,x+dx,y+1); return
-    for dx,dy in [(-1,0),(1,0),(0,-1),(0,1)]:
-        nx,ny=x+dx,y+dy
-        if inb(nx,ny) and grid[nx][ny] in (FIRE,LAVA,EMBER,MAGMA) and random.random()<0.04:
-            grid[x][y]=FIRE; life[x][y]=random.randint(500,1100); temp_g[x][y]=900.0; return
+update_coal = _update_powder_generic
 
 def update_copper(x,y):
     for dx,dy in [(-1,0),(1,0),(0,-1),(0,1)]:
@@ -1496,14 +1346,24 @@ def _is_hazard_at(nx, ny):
 
 _FORGE_HEAT = {FIRE, LAVA, MAGMA, CHARCOAL, EMBER}
 def _is_forge_nearby(x, y):
-    """True if STONE + heat source (fire/lava/charcoal) are both within 3 cells."""
+    """True if a FORGE element OR (STONE + heat) are within 4 cells."""
     has_stone = has_heat = False
-    for ox in range(-3, 4):
-        for oy in range(-3, 4):
-            c = grid[x+ox][y+oy] if inb(x+ox,y+oy) else EMPTY
-            if c == STONE:    has_stone = True
+    for ox in range(-4, 5):
+        for oy in range(-4, 5):
+            if not inb(x+ox, y+oy): continue
+            c = grid[x+ox][y+oy]
+            if c == FORGE:       return True   # dedicated forge block counts alone
+            if c == STONE:       has_stone = True
             if c in _FORGE_HEAT: has_heat  = True
             if has_stone and has_heat: return True
+    return False
+
+def _is_anvil_nearby(x, y):
+    """True if an ANVIL element is within 4 cells."""
+    for ox in range(-4, 5):
+        for oy in range(-4, 5):
+            if inb(x+ox, y+oy) and grid[x+ox][y+oy] == ANVIL:
+                return True
     return False
 
 def _ground_under(nx, ny):
@@ -1690,6 +1550,31 @@ _TOOL_STATS = {
     'lens':         (750,  40, True),
 }
 
+# ── Tier-3 tools: need ANVIL within 4 cells + knowledge >= 900
+_CRAFT_TOOLS_ANVIL = {
+    frozenset({CRYSTAL, STEEL }): 'master_blade',      # kills from range 4, 200 dur
+    frozenset({GOLD,    STEEL }): 'plate_armor',       # 75% damage reduction, 200 dur
+    frozenset({GOLD,    COAL  }): 'mining_rune',       # triples block gain per mine
+    frozenset({GOLD,    COPPER}): 'life_amulet',       # hunger/thirst decay 2x slower
+    frozenset({CRYSTAL, COAL  }): 'philosopher_stone', # converts stone→gold passively
+}
+# Add tier-3 to the combined lookup
+_CRAFT_TOOLS.update(_CRAFT_TOOLS_ANVIL)
+
+# Tier-3 additions to _TOOL_STATS (insert before _TRADE_VALUE)
+_TOOL_STATS.update({
+    'master_blade':      (900, 200, False),   # anvil_needed checked separately
+    'plate_armor':       (900, 200, False),
+    'mining_rune':       (900,  80, False),
+    'life_amulet':       (900, 150, False),
+    'philosopher_stone': (900,  60, False),
+})
+
+# Forge-crafted element recipe: STEEL + CHARCOAL near FORGE → ANVIL
+_CRAFT_RECIPES_FORGE = {
+    frozenset({STEEL, CHARCOAL}): ANVIL,   # requires forge nearby, knowledge >= 700
+}
+
 # Goods humans can carry for trading: element -> trade value in "credits"
 _TRADE_VALUE  = {GOLD:10, COPPER:5, CRYSTAL:8, COAL:2, STEEL:7,
                  BREAD:4, COOKED_MEAT:4, APPLE:2, HONEY:3}
@@ -1699,6 +1584,79 @@ _FOOD_VALUE  = {
     BERRY:150, SUGAR:150, DOUGH:140, FUNGUS:120, SEAWEED:120, PLANT:120,
     MOSS:100, SAPLING:100, SEED:80, LEAF:70,
 }
+
+def _give_to_human(gx, gy, el):
+    """Give element `el` directly to the human at grid cell (gx, gy).
+    Returns (label_text, label_color) for the floating feedback message.
+    The item is NOT placed in the world — it goes straight into the human's state.
+    """
+    g = gene[gx][gy]
+    if g is None:
+        g = make_genes(); gene[gx][gy] = g
+    # Ensure required keys exist
+    g.setdefault('hunger',   0)
+    g.setdefault('thirst',   0)
+    g.setdefault('knowledge',720)
+    g.setdefault('blocks',   5)
+    g.setdefault('hp',       100)
+    g.setdefault('inv',      {})
+    g.setdefault('tools',    {})
+
+    # ── Food ─────────────────────────────────────────────────────────────────
+    if el in _HUMAN_FOOD:
+        val = _FOOD_VALUE.get(el, 120)
+        g['hunger'] = max(0, g['hunger'] - val)
+        return f"-{val} hunger", hx('#ffd040')
+
+    # ── Drink ─────────────────────────────────────────────────────────────────
+    if el in (WATER, ICE):
+        g['thirst'] = max(0, g['thirst'] - 450)
+        return "refreshed!", hx('#60c8ff')
+
+    # ── Valuables → pocket ───────────────────────────────────────────────────
+    _inv_key = {GOLD:'gold', COPPER:'copper', CRYSTAL:'crystal', COAL:'coal'}
+    if el in _inv_key:
+        key = _inv_key[el]
+        g['inv'][key] = g['inv'].get(key, 0) + 1
+        kn_gain = {GOLD:8, COPPER:5, CRYSTAL:25, COAL:2}.get(el, 3)
+        g['knowledge'] = min(1000, g['knowledge'] + kn_gain)
+        col = {GOLD: hx('#ffd040'), COPPER: hx('#c87030'),
+               CRYSTAL: hx('#80e8ff'), COAL: hx('#909090')}[el]
+        return f"+1 {_inv_key[el]}", col
+
+    # ── Book → knowledge ─────────────────────────────────────────────────────
+    if el == BOOK:
+        gain = 200
+        g['knowledge'] = min(1000, g['knowledge'] + gain)
+        return f"+{gain} know", hx('#c8a060')
+
+    # ── Building materials → blocks ──────────────────────────────────────────
+    if el in (WOOD, STONE, GRAVEL, SAND, CLAY, CHARCOAL, SANDSTONE):
+        add = 3 if el in (WOOD, STONE) else 2
+        g['blocks'] = min(30, g['blocks'] + add)
+        return f"+{add} blocks", hx('#a08060')
+
+    # ── Harmful gifts ────────────────────────────────────────────────────────
+    if el == POISON:
+        dmg = random.randint(20, 40)
+        g['hp'] = max(0, g['hp'] - dmg)
+        if g['hp'] <= 0: grid[gx][gy] = MEAT; gene[gx][gy] = None
+        return f"-{dmg} hp (poison)", hx('#40e020')
+
+    if el in (FIRE, LAVA):
+        dmg = random.randint(30, 60)
+        g['hp'] = max(0, g['hp'] - dmg)
+        if g['hp'] <= 0: grid[gx][gy] = ASH; gene[gx][gy] = None
+        return f"-{dmg} hp (burn!)", hx('#ff4010')
+
+    if el == ACID:
+        dmg = random.randint(25, 50)
+        g['hp'] = max(0, g['hp'] - dmg)
+        if g['hp'] <= 0: grid[gx][gy] = EMPTY; gene[gx][gy] = None
+        return f"-{dmg} hp (acid!)", hx('#50ff10')
+
+    return "", hx('#ffffff')
+
 
 def update_human(x,y):
     if apply_realistic_survival(x, y): return
@@ -1735,8 +1693,13 @@ def update_human(x,y):
     # ── Age, hunger, thirst ───────────────────────────────────────────────────
     data[x][y] += 1
     age = data[x][y]
-    if age % 3 == 0: g['hunger'] += 1        # hunger: +1 every 3 ticks
-    if age % 2 == 0: g['thirst'] += 1        # thirst: +1 every 2 ticks (faster!)
+    _hmod = 6 if g.get('tools',{}).get('life_amulet',0) > 0 else 3
+    _tmod = 4 if g.get('tools',{}).get('life_amulet',0) > 0 else 2
+    if age % _hmod == 0: g['hunger'] += 1    # hunger: +1 every 3 ticks (6 with amulet)
+    if age % _tmod == 0: g['thirst'] += 1    # thirst: +1 every 2 ticks (4 with amulet)
+    # Life amulet slowly depletes
+    if g.get('tools',{}).get('life_amulet',0) > 0 and age % 50 == 0:
+        g['tools']['life_amulet'] = max(0, g['tools']['life_amulet'] - 1)
     if age > 36000 or g['hunger'] > 1000 or g['thirst'] > 600 or g['health'] <= 0:
         grid[x][y]=EMPTY; gene[x][y]=None; return
 
@@ -1802,7 +1765,16 @@ def update_human(x,y):
         for ddy in range(-2, 3):
             nx2,ny2 = x+ddx, y+ddy
             if not inb(nx2,ny2) or grid[nx2][ny2] not in _HUMAN_THREAT: continue
-            if g['tools'].get('spear',0) > 0 and g['fight_cd'] == 0:
+            if g['tools'].get('master_blade',0) > 0 and g['fight_cd'] == 0:
+                # Master blade: instant kill at range 4, always leaves MEAT
+                tg = gene[nx2][ny2]
+                if tg is None: tg = make_genes(); gene[nx2][ny2] = tg
+                tg['health'] = 0
+                grid[nx2][ny2] = MEAT; gene[nx2][ny2] = None
+                g['inv']['gold'] = g['inv'].get('gold',0) + 2
+                g['fight_cd'] = 14
+                g['tools']['master_blade'] = max(0, g['tools']['master_blade'] - 1)
+            elif g['tools'].get('spear',0) > 0 and g['fight_cd'] == 0:
                 # Attack with spear: deal damage to threat gene's health
                 tg = gene[nx2][ny2]
                 if tg is None: tg = make_genes(); gene[nx2][ny2] = tg
@@ -1816,8 +1788,11 @@ def update_human(x,y):
             elif g['fight_cd'] == 0:
                 # Unarmed (or sword): take reduced damage if armored
                 dmg = random.randint(8, 18)
-                if g['tools'].get('copper_armor', 0) > 0:
-                    dmg = dmg // 2
+                if g['tools'].get('plate_armor', 0) > 0:
+                    dmg = dmg // 4          # 75% reduction
+                    g['tools']['plate_armor'] = max(0, g['tools']['plate_armor'] - 1)
+                elif g['tools'].get('copper_armor', 0) > 0:
+                    dmg = dmg // 2          # 50% reduction
                     g['tools']['copper_armor'] = max(0, g['tools']['copper_armor'] - 1)
                 g['health'] = max(0, g['health'] - dmg)
                 g['fight_cd'] = 12
@@ -1849,7 +1824,21 @@ def update_human(x,y):
     if g['tools'].get('crown', 0) > 0:
         g['knowledge'] = 1000
 
-    # ── Tool crafting (tiered: basic / forge) ────────────────────────────────
+    # ── Tier-3 passive effects ────────────────────────────────────────────────
+    # Life Amulet: hunger/thirst decay 2x slower (handled via tick modulo below)
+    # Philosopher's Stone: passively converts adjacent STONE → GOLD
+    if g['tools'].get('philosopher_stone', 0) > 0 and age % 60 == 0:
+        for ox2,oy2 in [(-1,0),(1,0),(0,-1),(0,1),(-2,0),(2,0)]:
+            nx2,ny2 = x+ox2, y+oy2
+            if inb(nx2,ny2) and grid[nx2][ny2] == STONE:
+                grid[nx2][ny2] = GOLD
+                g['tools']['philosopher_stone'] = max(0, g['tools']['philosopher_stone'] - 1)
+                break
+    # Master Blade: ranged attack up to 4 cells (handled in combat section override)
+    # Mining Rune: applied in the mining section (checked there)
+    # Plate Armor: applied in combat damage section (checked there)
+
+    # ── Tool crafting (tiered: basic / forge / anvil) ─────────────────────────
     g['tool_cd'] = max(0, g['tool_cd'] - 1)
     if g['tool_cd'] == 0:
         adj = []
@@ -1857,26 +1846,51 @@ def update_human(x,y):
             nx2,ny2 = x+ddx, y+ddy
             if inb(nx2,ny2) and grid[nx2][ny2] not in (EMPTY,AIR,HUMAN):
                 adj.append((nx2, ny2, grid[nx2][ny2]))
-        for i in range(len(adj)):
-            for j in range(i+1, len(adj)):
-                ax,ay,ae = adj[i]; bx,by,be = adj[j]
-                key = frozenset({ae, be})
-                if key not in _CRAFT_TOOLS: continue
-                tool = _CRAFT_TOOLS[key]
-                req_k, dur, needs_forge = _TOOL_STATS.get(tool, (300, 60, False))
-                if g['knowledge'] < req_k: continue
-                if needs_forge and not _is_forge_nearby(x, y): continue
-                # Craft it
-                grid[ax][ay] = EMPTY; grid[bx][by] = EMPTY
-                g['tools'][tool] = g['tools'].get(tool, 0) + dur
-                kn_gain = 120 if needs_forge else 80
-                g['knowledge'] = min(1000, g['knowledge'] + kn_gain)
-                g['tool_cd'] = 120 if needs_forge else 80
-                # Crown is special: instant knowledge boost
-                if tool == 'crown': g['knowledge'] = 1000
-                # Lens: passive knowledge aura handled below
-                break
-            else: continue; break
+
+        # Try crafting ANVIL (STEEL + CHARCOAL near FORGE, knowledge >= 700)
+        anvil_crafted = False
+        if g['knowledge'] >= 700 and _is_forge_nearby(x, y):
+            for i in range(len(adj)):
+                for j in range(i+1, len(adj)):
+                    ax,ay,ae = adj[i]; bx,by,be = adj[j]
+                    key = frozenset({ae, be})
+                    if key in _CRAFT_RECIPES_FORGE:
+                        grid[ax][ay] = _CRAFT_RECIPES_FORGE[key]
+                        life[ax][ay] = 0; data[ax][ay] = 0
+                        grid[bx][by] = EMPTY
+                        g['knowledge'] = min(1000, g['knowledge'] + 150)
+                        g['tool_cd'] = 160
+                        anvil_crafted = True; break
+                if anvil_crafted: break
+
+        if not anvil_crafted:
+            for i in range(len(adj)):
+                for j in range(i+1, len(adj)):
+                    ax,ay,ae = adj[i]; bx,by,be = adj[j]
+                    key = frozenset({ae, be})
+                    if key not in _CRAFT_TOOLS: continue
+                    tool = _CRAFT_TOOLS[key]
+                    req_k, dur, needs_forge = _TOOL_STATS.get(tool, (300, 60, False))
+                    if g['knowledge'] < req_k: continue
+                    # Tier-3: needs anvil nearby
+                    if tool in _CRAFT_TOOLS_ANVIL:
+                        if not _is_anvil_nearby(x, y): continue
+                    elif needs_forge:
+                        if not _is_forge_nearby(x, y): continue
+                    # Craft it
+                    grid[ax][ay] = EMPTY; grid[bx][by] = EMPTY
+                    g['tools'][tool] = g['tools'].get(tool, 0) + dur
+                    if tool in _CRAFT_TOOLS_ANVIL:
+                        kn_gain = 200
+                    elif needs_forge:
+                        kn_gain = 120
+                    else:
+                        kn_gain = 80
+                    g['knowledge'] = min(1000, g['knowledge'] + kn_gain)
+                    g['tool_cd'] = 160 if tool in _CRAFT_TOOLS_ANVIL else (120 if needs_forge else 80)
+                    if tool == 'crown': g['knowledge'] = 1000
+                    break
+                else: continue; break
 
     # ── Element crafting (food + materials) ───────────────────────────────────
     g['craft_cd'] = max(0, g['craft_cd'] - 1)
@@ -1898,17 +1912,32 @@ def update_human(x,y):
                         grid[ax][ay] = _CRAFT_RECIPES[key]; life[ax][ay]=0; data[ax][ay]=0
                         grid[bx][by] = EMPTY
                         g['knowledge'] = min(1000, g['knowledge'] + 60)
-                        g['craft_cd'] = 40
+                        g['craft_cd'] = 8
                         crafted = True; break
 
+    # ── Book reading ──────────────────────────────────────────────────────────
+    for ddx,ddy in [(-1,0),(1,0),(0,1),(0,-1)]:
+        nx2,ny2 = x+ddx, y+ddy
+        if inb(nx2,ny2) and grid[nx2][ny2] == BOOK:
+            g['knowledge'] = min(1000, g['knowledge'] + 200)
+            grid[nx2][ny2] = EMPTY   # book consumed on reading
+            break
+
+    # ── Book writing (high-knowledge humans occasionally write books) ─────────
+    if g['knowledge'] >= 800 and g['hunger'] < 200 and random.random() < 0.0008:
+        for ox2,oy2 in [(-1,0),(1,0),(0,-1),(0,1)]:
+            wx2,wy2 = x+ox2, y+oy2
+            if inb(wx2,wy2) and grid[wx2][wy2] in (EMPTY,AIR):
+                grid[wx2][wy2] = BOOK; life[wx2][wy2]=0; break
+
     # ── Reproduction ─────────────────────────────────────────────────────────
-    if (age > 2000 and age < 28000 and
-            g['hunger'] < 300 and g['thirst'] < 200 and random.random() < 0.0005):
+    if (age > 300 and age < 28000 and
+            g['hunger'] < 300 and g['thirst'] < 200 and random.random() < 0.003):
         for ox,oy in [(-2,0),(2,0),(-1,0),(1,0),(0,-1),(0,1)]:
             mx,my = x+ox, y+oy
             if not inb(mx,my) or grid[mx][my] != HUMAN: continue
             mg = gene[mx][my]
-            if mg is None or data[mx][my] < 2000 or mg.get('hunger',999) > 300: continue
+            if mg is None or data[mx][my] < 300 or mg.get('hunger',999) > 300: continue
             spots = [(x-1,y),(x+1,y),(x,y-1),(x-1,y-1),(x+1,y-1)]
             random.shuffle(spots)
             for bx,by in spots:
@@ -1990,7 +2019,12 @@ def update_human(x,y):
     # ── Goal state machine ────────────────────────────────────────────────────
     g['scan_cd'] = max(0, g['scan_cd']-1)
     if g['scan_cd'] == 0:
-        g['scan_cd'] = 5 + random.randint(0,3)
+        g['scan_cd'] = 2 + random.randint(0,1)
+
+        # Passive knowledge growth each scan tick
+        near_humans = sum(1 for ox2,oy2 in [(-1,0),(1,0),(-2,0),(2,0),(0,-1),(0,1)]
+                          if inb(x+ox2,y+oy2) and grid[x+ox2][y+oy2] == HUMAN)
+        g['knowledge'] = min(1000, g['knowledge'] + max(1, near_humans * 8) + 5)
 
         # P1 — flee threats immediately (scan all 8 directions, wide radius)
         fled = False
@@ -2154,13 +2188,25 @@ def update_human(x,y):
             # Try mining the obstacle instead of turning around
             mined = False
             if g['mine_cd'] == 0:
-                for my_off in [0, -1, -2]:   # try at eye level, one up, two up
+                has_rune   = g['tools'].get('mining_rune', 0) > 0
+                has_steelpick = g['tools'].get('steel_pick', 0) > 0
+                mine_range = [0, -1, -2, 1] if (has_rune or has_steelpick) else [0, -1, -2]
+                for my_off in mine_range:   # try at eye level, one up, two up
                     mx2, my2 = nx2, y+my_off
                     if inb(mx2,my2) and grid[mx2][my2] in _MINEABLE:
                         grid[mx2][my2] = EMPTY
-                        g['blocks'] = min(30, g['blocks'] + 1)
+                        gain = 3 if has_rune else 1
+                        g['blocks'] = min(30, g['blocks'] + gain)
                         g['knowledge'] = min(1000, g['knowledge'] + 3)
-                        g['mine_cd'] = 8
+                        g['mine_cd'] = 2 if (has_rune or has_steelpick) else 4
+                        if has_rune:
+                            g['tools']['mining_rune'] = max(0, g['tools']['mining_rune'] - 1)
+                            # 20% chance to find a valuable when using rune
+                            if random.random() < 0.20:
+                                vmat = random.choice([GOLD, COPPER, CRYSTAL, COAL])
+                                for ox2,oy2 in [(-1,0),(1,0),(0,-1),(0,1)]:
+                                    if inb(mx2+ox2,my2+oy2) and grid[mx2+ox2][my2+oy2] in (EMPTY,AIR):
+                                        grid[mx2+ox2][my2+oy2] = vmat; break
                         mined = True; break
             if not mined:
                 d=-d; life[x][y]=d
@@ -2449,8 +2495,10 @@ def apply_realistic_survival(x, y) -> bool:
     g.setdefault('hp', 100)
     
     # 1. Oxygen/Drowning: lose oxygen if in water/mud and not fish/frog
-    in_water = inb(x, y) and grid[x][y] in [WATER, MUD]
-    is_aquatic = grid[x][y] in [FISH, WHALE, DOLPHIN, FROG]
+    el = grid[x][y]
+    in_water = any(inb(x+dx,y+dy) and grid[x+dx][y+dy] in (WATER, MUD)
+                   for dx,dy in [(-1,0),(1,0),(0,-1),(0,1)])
+    is_aquatic = el in (FISH, WHALE, DOLPHIN, FROG)
     if in_water and not is_aquatic:
         if random.random() < 0.2: g['oxygen'] -= 1   # drowns in ~8 sec instead of 1.7
         if random.random() < 0.1 and inb(x, y-1) and grid[x][y-1]==WATER:
@@ -2521,9 +2569,14 @@ def update_snake(x, y):
         update_animal(x, y)
     for dx, dy in [(-1,0), (1,0), (0,-1), (0,1)]:
         nx, ny = x+dx, y+dy
-        if inb(nx, ny) and grid[nx][ny] in [HUMAN, RABBIT, BIRD]:
-            grid[nx][ny] = POISON
+        if inb(nx, ny) and grid[nx][ny] in (HUMAN, RABBIT, BIRD):
+            tg = gene[nx][ny]
+            if tg is None: tg = make_genes(); gene[nx][ny] = tg
+            tg['hp'] = tg.get('hp', 100) - random.randint(15, 35)
+            if tg['hp'] <= 0:
+                grid[nx][ny] = MEAT; gene[nx][ny] = None
             updated[nx][ny] = True
+            break
     if grid[x][y] == SNAKE:
         _try_breed(x, y, SNAKE, 400, 5000)
 
@@ -2637,6 +2690,57 @@ def update_dough(x, y):
             if grid[nx2][ny2] in (LAVA, MAGMA) and random.random() < 0.10:
                 grid[x][y] = FIRE; life[x][y] = random.randint(40, 80); return
 
+# ── Forge: stone-and-charcoal structure, acts as permanent heat source ────────
+def update_book(x, y):
+    """Book drifts downward like a leaf; burns in fire; grants knowledge when read by humans."""
+    life[x][y] += 1
+    # Burn in fire/lava
+    for ddx,ddy in [(-1,0),(1,0),(0,1),(0,-1),(0,0)]:
+        nx2,ny2 = x+ddx,y+ddy
+        if inb(nx2,ny2) and grid[nx2][ny2] in (FIRE,LAVA,EMBER) and random.random()<0.08:
+            grid[x][y] = ASH; return
+    # Fall as powder
+    if inb(x,y+1) and grid[x][y+1] in (EMPTY,AIR):
+        swap(x,y,x,y+1); return
+    # Slide sideways (like sand) if blocked below
+    if random.random()<0.3:
+        d2 = random.choice([-1,1])
+        if inb(x+d2,y+1) and grid[x+d2][y+1] in (EMPTY,AIR):
+            swap(x,y,x+d2,y+1); return
+
+def update_forge(x, y):
+    """Forge is a static solid that emits heat — melts ice, dries water, enables tier-2 crafting."""
+    temp_g[x][y] = max(temp_g[x][y], 350.0)   # always hot
+    # Slowly dry out adjacent water/ice into steam/empty
+    if random.random() < 0.004:
+        for ddx,ddy in [(-1,0),(1,0),(0,1),(0,-1)]:
+            nx2,ny2 = x+ddx, y+ddy
+            if inb(nx2,ny2):
+                c = grid[nx2][ny2]
+                if c == ICE:   grid[nx2][ny2] = WATER
+                elif c == SNOW: grid[nx2][ny2] = WATER
+    # Forge can smelt adjacent COPPER into STEEL over time (rare, takes a while)
+    if random.random() < 0.0008:
+        for ddx,ddy in [(-1,0),(1,0),(0,1),(0,-1)]:
+            nx2,ny2 = x+ddx, y+ddy
+            if inb(nx2,ny2) and grid[nx2][ny2] == COPPER:
+                grid[nx2][ny2] = STEEL; break
+    # Burns if lava/magma poured on it (but doesn't spread fire to neighbours)
+    for ddx,ddy in [(-1,0),(1,0),(0,1),(0,-1)]:
+        nx2,ny2 = x+ddx, y+ddy
+        if inb(nx2,ny2) and grid[nx2][ny2] in (LAVA, MAGMA) and random.random() < 0.002:
+            grid[x][y] = STONE   # forge cracks under extreme heat
+
+# ── Anvil: steel+charcoal structure forged at a Forge, enables tier-3 ─────────
+def update_anvil(x, y):
+    """Anvil is permanent cold-steel solid that enables tier-3 crafting nearby."""
+    temp_g[x][y] = max(temp_g[x][y], 50.0)   # slightly warm from residual forge heat
+    # Anvil can be slowly destroyed by lava/acid
+    for ddx,ddy in [(-1,0),(1,0),(0,1),(0,-1)]:
+        nx2,ny2 = x+ddx, y+ddy
+        if inb(nx2,ny2) and grid[nx2][ny2] in (LAVA, ACID) and random.random() < 0.001:
+            grid[x][y] = STEEL   # melts back to raw steel
+
 # ── Crafting knowledge system ─────────────────────────────────────────────────
 # Recipes: frozenset of two input element IDs -> output element ID
 _CRAFT_RECIPES = {
@@ -2647,6 +2751,10 @@ _CRAFT_RECIPES = {
     frozenset({SEED, FUNGUS}): MUSHROOM,
     frozenset({SAND, STONE}): SANDSTONE,
     frozenset({CLAY, WATER}): MUD,
+    # Forge: stone + charcoal (charcoal = burned wood, available everywhere)
+    frozenset({STONE, CHARCOAL}): FORGE,
+    # Book: wood pulp + leaf (knowledge item, readable by humans)
+    frozenset({WOOD, LEAF}): BOOK,
 }
 
 # Dispatch table ────────────────────────────────────────────────────────────
@@ -2677,6 +2785,9 @@ UPDATE_FN = {
     BEE:update_bee, FROG:update_frog, WEB:update_web,
     MUSHROOM:update_mushroom, CORN:update_corn, CARROT:update_carrot,
     COOKED_MEAT:update_cooked_meat, DOUGH:update_dough,
+    FORGE:update_forge,
+    ANVIL:update_anvil,
+    BOOK:update_book,
 }
 
 # ── Main grid update ──────────────────────────────────────────────────────────
@@ -2693,13 +2804,15 @@ def update_grid():
         else:
             for _ in range(14):
                 rx=int((random.randint(0,COLS-1)-wind_x*2)%COLS)
-                if grid[rx][0]==EMPTY: grid[rx][0]=WATER; temp_g[rx][0]=max(temperature,8.0)
+                if grid[rx][0]==EMPTY:
+                    grid[rx][0]=WATER; temp_g[rx][0]=max(temperature,8.0); life[rx][0]=-1
             ltng_t-=1
             if ltng_t<=0: spawn_lightning(random.randint(10,COLS-10)); ltng_t=random.randint(18,70)
     elif raining:
         for _ in range(6):
             rx=int((random.randint(0,COLS-1)-wind_x)%COLS)
-            if grid[rx][0]==EMPTY: grid[rx][0]=WATER; temp_g[rx][0]=max(temperature,10.0)
+            if grid[rx][0]==EMPTY:
+                grid[rx][0]=WATER; temp_g[rx][0]=max(temperature,10.0); life[rx][0]=-1
 
     if snowing:
         for _ in range(9 if blizzard else 4):
@@ -2733,6 +2846,28 @@ def update_grid():
                 x=random.randint(0,COLS-1); y=random.randint(0,ROWS-1)
                 temp_g[x][y]=min(temp_g[x][y]+0.6, temperature+55)
 
+    global eruption_on, eruption_t, sandstorm, sandstorm_t
+    if eruption_on:
+        eruption_t-=1
+        if eruption_t<=0: eruption_on=False
+        else:
+            for _ in range(3 if random.random()<0.4 else 1):
+                lx=random.randint(5,COLS-5)
+                for ly in range(ROWS-5,ROWS//2,-1):
+                    if inb(lx,ly) and grid[lx][ly] in GROUND_SOLIDS:
+                        if inb(lx,ly-1) and grid[lx][ly-1] in (EMPTY,AIR):
+                            grid[lx][ly-1]=LAVA; temp_g[lx][ly-1]=1200.0
+                            if random.random()<0.35:
+                                explode(lx,ly-1,random.randint(2,6),1600)
+                        break
+    if sandstorm:
+        sandstorm_t-=1
+        if sandstorm_t<=0: sandstorm=False; wind_x=0.0
+        else:
+            for _ in range(10):
+                rx=0 if wind_x>0 else COLS-1
+                ry=random.randint(0,ROWS-6)
+                if inb(rx,ry) and grid[rx][ry]==EMPTY: grid[rx][ry]=SAND
     update_tornado(); diffuse_heat(); update_oxygen()
 
     for y in range(ROWS-1,-1,-1):
@@ -3109,10 +3244,17 @@ def draw_animal_sprites():
                     elif not label and blk >= 5: label, tcol = 'building', (200, 160, 60)
                     # Tool badge suffix
                     tool_badge = ''
-                    if tls.get('spear',0) > 0: tool_badge = ' [S]'
-                    elif tls.get('axe',0)  > 0: tool_badge = ' [A]'
-                    elif tls.get('pick',0) > 0: tool_badge = ' [P]'
-                    elif tls.get('knife',0)> 0: tool_badge = ' [K]'
+                    if   tls.get('master_blade',0)      > 0: tool_badge = ' [MB]'
+                    elif tls.get('plate_armor',0)       > 0: tool_badge = ' [PA]'
+                    elif tls.get('mining_rune',0)       > 0: tool_badge = ' [MR]'
+                    elif tls.get('philosopher_stone',0) > 0: tool_badge = ' [PS]'
+                    elif tls.get('life_amulet',0)       > 0: tool_badge = ' [LA]'
+                    elif tls.get('copper_sword',0)      > 0: tool_badge = ' [CS]'
+                    elif tls.get('sword',0)             > 0: tool_badge = ' [Sw]'
+                    elif tls.get('spear',0)             > 0: tool_badge = ' [S]'
+                    elif tls.get('axe',0)               > 0: tool_badge = ' [A]'
+                    elif tls.get('pick',0)              > 0: tool_badge = ' [P]'
+                    elif tls.get('knife',0)             > 0: tool_badge = ' [K]'
                     if C >= 8 and (label or tool_badge or wealth > 0):
                         display = (label or ('$'+str(wealth) if wealth>0 else 'idle')) + tool_badge
                         bt = sfont.render(display, True, tcol)
@@ -3180,13 +3322,16 @@ def render_grid():
     gn = _clr_lut[g, 1].astype(np.int16) + _noise_g
     b  = _clr_lut[g, 2].astype(np.int16) + _noise_b
 
-    # ── FIRE — hot white-yellow core, orange tips, red fade ──────────────────
+    # ── FIRE — hot white-yellow core + upward yellow streaks ─────────────────
     fm = (g == FIRE)
     if fm.any():
         fl = np.random.randint(0, 90, g.shape, dtype=np.int16)
         r[fm] = np.clip(fl[fm] * 2 + 140, 180, 255)
         gn[fm] = np.clip(fl[fm]          ,   0, 200)
         b[fm]  = np.clip(fl[fm] // 4     ,   0,  60)
+        # Streak: centre columns get brighter yellow tips
+        streak = (np.sin(_X_ARR * 0.9 + tf * 0.18) * 35 + 25).astype(np.int16)
+        gn[fm] = np.clip(gn[fm].astype(np.int16) + streak[fm], 0, 220)
 
     # ── EMBER — pulsing orange glow ───────────────────────────────────────────
     em = (g == EMBER)
@@ -3194,6 +3339,23 @@ def render_grid():
         gl = int(45 * abs(math.sin(tf * 0.15)))
         r[em]  = np.clip(r[em].astype(np.int16)  + gl,      0, 255)
         gn[em] = np.clip(gn[em].astype(np.int16) + gl // 3, 0, 255)
+
+    # ── ANVIL — cold blue-silver pulse ───────────────────────────────────────
+    avm = (g == ANVIL)
+    if avm.any():
+        ap = int(30 * abs(math.sin(tf * 0.04 + 1.0)))
+        r[avm]  = np.clip(r[avm].astype(np.int16)  - 5,      0, 255)
+        gn[avm] = np.clip(gn[avm].astype(np.int16) + ap//2,  0, 255)
+        b[avm]  = np.clip(b[avm].astype(np.int16)  + ap,     0, 255)
+
+    # ── FORGE — slow deep-red pulse with bright ember cracks ─────────────────
+    fgm = (g == FORGE)
+    if fgm.any():
+        fp = int(60 * abs(math.sin(tf * 0.06)))   # slow breath
+        fc = np.random.randint(0, 40, g.shape, dtype=np.int16)  # crack flicker
+        r[fgm]  = np.clip(r[fgm].astype(np.int16)  + fp + fc[fgm], 0, 255)
+        gn[fgm] = np.clip(gn[fgm].astype(np.int16) + fp // 4,      0, 120)
+        b[fgm]  = np.clip(b[fgm].astype(np.int16)  - 10,           0,  30)
 
     # ── LAVA — pulse with cracked-crust noise ─────────────────────────────────
     lm = (g == LAVA)
@@ -3209,12 +3371,22 @@ def render_grid():
         p = int(22 * abs(math.sin(tf * 0.012)))
         r[mm]  = np.clip(r[mm].astype(np.int16) + p, 0, 255)
 
-    # ── WATER — x-pos ripple shimmer ─────────────────────────────────────────
+    # ── WATER — ripple shimmer + surface foam highlights ─────────────────────
     wm = (g == WATER)
     if wm.any():
         wave = (np.sin(_X_ARR * 0.4 + tf * 0.025) * 22).astype(np.int16)
         b[wm]  = np.clip(b[wm].astype(np.int16)  + wave[wm], 0, 255)
         r[wm]  = np.clip(r[wm].astype(np.int16)  - wave[wm] // 4, 0, 255)
+        # Foam: bright highlight on top-surface cells (no water above)
+        g_arr = np.asarray(grid, dtype=np.intp)
+        surface_above = np.zeros(g_arr.shape, dtype=bool)
+        surface_above[:, 1:] = (g_arr[:, :-1] == EMPTY) | (g_arr[:, :-1] == AIR)
+        surface_above[:, 0] = True
+        foam_mask = wm & surface_above
+        foam_wave = (np.sin(_X_ARR * 0.7 + tf * 0.04) * 30 + 30).astype(np.int16)
+        r[foam_mask] = np.clip(r[foam_mask].astype(np.int16) + foam_wave[foam_mask], 0, 255)
+        gn[foam_mask] = np.clip(gn[foam_mask].astype(np.int16) + foam_wave[foam_mask], 0, 255)
+        b[foam_mask] = np.clip(b[foam_mask].astype(np.int16) + foam_wave[foam_mask], 0, 255)
 
     # ── ICE — cold facet shimmer ──────────────────────────────────────────────
     im = (g == ICE)
@@ -3364,6 +3536,17 @@ def render_grid():
     else:
         pygame.transform.scale(pixel_surf, (scaled_w, scaled_h), _scale_surf)
     screen.blit(_scale_surf, (cam_offset_x, cam_offset_y))
+    # Grid overlay
+    if show_grid:
+        cell_px = int(CELL * zoom_level)
+        if cell_px >= 4:  # only draw when cells are large enough to see
+            gc = (50, 55, 70)
+            for gx2 in range(COLS+1):
+                sx2 = int(gx2 * CELL * zoom_level) + cam_offset_x
+                pygame.draw.line(screen, gc, (sx2, cam_offset_y), (sx2, cam_offset_y+int(ROWS*CELL*zoom_level)))
+            for gy2 in range(ROWS+1):
+                sy2 = int(gy2 * CELL * zoom_level) + cam_offset_y
+                pygame.draw.line(screen, gc, (cam_offset_x, sy2), (cam_offset_x+int(COLS*CELL*zoom_level), sy2))
 
 def draw_tornado_overlay():
     if not tornado_on: return
@@ -3405,10 +3588,26 @@ def draw_sky_bg():
         c = blend(top, bottom, t)
         pygame.draw.line(screen, c, (0, sy), (WIDTH, sy))
 
+    # Sun or Moon circle on the sky
+    body_x = int(WIDTH * 0.15 + (WIDTH * 0.70) * ((sun_ang % (2*math.pi)) / (2*math.pi)))
+    if is_day:
+        # Sun: bright yellow circle with glow
+        sun_y = int(HEIGHT * 0.12 + HEIGHT * 0.05 * (1 - math.sin(sun_ang)))
+        pulse = int(3 * abs(math.sin(frame_t * 0.02)))
+        pygame.draw.circle(screen, cc(255, 240+pulse*2, 160), (body_x, sun_y), 18 + pulse)
+        pygame.draw.circle(screen, (255, 255, 220), (body_x, sun_y), 13)
+    else:
+        # Moon: silver-white circle
+        moon_ang = (sun_ang + math.pi) % (2*math.pi)
+        moon_x = int(WIDTH * 0.15 + (WIDTH * 0.70) * (moon_ang / (2*math.pi)))
+        moon_y = int(HEIGHT * 0.12)
+        pygame.draw.circle(screen, (200, 210, 230), (moon_x, moon_y), 11)
+        pygame.draw.circle(screen, (170, 180, 200), (moon_x + 3, moon_y - 2), 5)
+
 # ── UI rendering ──────────────────────────────────────────────────────────────
 def draw_ui():
-    # Semi-transparent panel
-    panel = pygame.Surface((510, 200), pygame.SRCALPHA)
+    # Semi-transparent panel — tall enough for 3 button rows + hotbar + padding
+    panel = pygame.Surface((510, 222), pygame.SRCALPHA)
     pygame.draw.rect(panel, (8, 8, 20, 210), panel.get_rect(), border_radius=12)
     pygame.draw.rect(panel, (80, 80, 120, 180), panel.get_rect(), width=2, border_radius=12)
     pygame.draw.line(panel, (140,140,200,100), (12,2), (498,2), 1)
@@ -3424,13 +3623,21 @@ def draw_ui():
     elif raining:  ws="Rain"
     elif snowing:  ws="Snow"
     if tornado_on: ws += "+Tornado"
+    if eruption_on: ws += "+Eruption"
+    if sandstorm: ws = "Sandstorm"
 
+    # Cursor temperature
+    mp2 = pygame.mouse.get_pos()
+    cgx = int((mp2[0]-cam_offset_x)/(CELL*zoom_level))
+    cgy = int((mp2[1]-cam_offset_y)/(CELL*zoom_level))
+    cur_cell_temp = temp_g[cgx][cgy] if (0<=cgx<COLS and 0<=cgy<ROWS) else temperature
+    speed_col = hx('#40ff80') if sim_speed>1 else hx('#787888')
     info = [
-        (f"Brush:{brush}  {'PAUSED' if paused else 'Running'}", hx('#e8e8f8')),
-        (f"Weather: {ws:<22s}  {'Day' if is_day else 'Night'}", hx('#90b8f0')),
-        (f"Wind: {abs(wind_x):.1f}{'>' if wind_x>0 else '<' if wind_x<0 else '-'}  "
-         f"Temp:{temperature:+.0f}C  Hum:{int(global_hum*100)}%", temp_col),
-        ("C=Clear  P=Pause  R=Rain  S=Snow  T=Storm  N=Tornado  ESC=Menu", hx('#787888')),
+        (f"Brush:{brush}  {'PAUSED' if paused else 'Running'}  FPS:{fps_val:.0f}  Speed:{sim_speed}x", hx('#e8e8f8')),
+        (f"Weather: {ws:<22s}  {'Day' if is_day else 'Night'}  DayLen:{DAY_LEN//60}s", hx('#90b8f0')),
+        (f"Wind:{abs(wind_x):.1f}{'>' if wind_x>0 else '<' if wind_x<0 else '-'}  "
+         f"Temp:{temperature:+.0f}C  Hum:{int(global_hum*100)}%  CursorT:{cur_cell_temp:.0f}°", temp_col),
+        ("C=Clear P=Pause R=Rain S=Snow T=Storm N=Tornado V=Erupt Q=Sandstorm ESC=Menu", hx('#787888')),
     ]
     for i,(txt,col) in enumerate(info):
         screen.blit(font.render(txt, True, col), (18, 14 + i*20))
@@ -3442,17 +3649,29 @@ def draw_ui():
         elif btn.lbl=="Elements": btn.col=hx('#284880') if sidebar_open else hx('#183860')
         btn.draw(screen)
 
-    # Current element swatch + name next to Elements button
-    sx = 220; sy = R3 + 1
+    # Current element swatch + name — placed between info rows and R1 buttons
+    # (clear gap at y=96..112, well above R1=114)
+    sx = 18; sy = 96
     el_col = COLORS.get(cur_el, hx('#808080'))
-    pygame.draw.rect(screen, el_col, pygame.Rect(sx, sy, 20, 20), border_radius=3)
-    pygame.draw.rect(screen, hx('#606080'), pygame.Rect(sx, sy, 20, 20), width=1, border_radius=3)
-    ntxt = font.render(NAMES.get(cur_el, '?'), True, hx('#e8e8f8'))
-    screen.blit(ntxt, (sx + 26, sy + 3))
+    pygame.draw.rect(screen, el_col, pygame.Rect(sx, sy, 18, 16), border_radius=3)
+    pygame.draw.rect(screen, hx('#606080'), pygame.Rect(sx, sy, 18, 16), width=1, border_radius=3)
+    ntxt = font.render(f"El: {NAMES.get(cur_el, '?')}", True, hx('#e8e8f8'))
+    screen.blit(ntxt, (sx + 24, sy + 1))
+
+    # Hotbar display — below R3 buttons (R3=168, h=22 → ends at 190, +6 gap = 196)
+    hb_y = 198; hb_x = 18
+    for hi, hel in enumerate(hotbar):
+        hcol = COLORS.get(hel, hx('#606060'))
+        hr = pygame.Rect(hb_x + hi*26, hb_y, 22, 16)
+        border_c = hx('#ffe060') if hel == cur_el else hx('#404060')
+        pygame.draw.rect(screen, hcol, hr, border_radius=3)
+        pygame.draw.rect(screen, border_c, hr, width=1, border_radius=3)
+        nt2 = font.render(str(hi+1), True, hx('#e0e0ff'))
+        screen.blit(nt2, (hb_x + hi*26 + 7, hb_y + 1))
 
     # Brush preview circle near cursor
     mp = pygame.mouse.get_pos()
-    in_ui  = mp[0] < 514 and mp[1] < 206
+    in_ui  = mp[0] < 514 and mp[1] < 228
     in_sb  = sidebar_open and mp[0] >= WIDTH - SIDEBAR_W
     if not in_ui and not in_sb:
         col = COLORS.get(cur_el, hx('#ffffff'))
@@ -3461,6 +3680,29 @@ def draw_ui():
         pygame.draw.circle(screen, hx('#ffffff'), mp, rad + 1, 1)
 
 _sidebar_filtered = []   # shared between draw_sidebar and click handler
+
+def draw_stats_overlay():
+    """Show top-10 element counts in a small overlay panel."""
+    counts = {}
+    for x in range(COLS):
+        for y in range(ROWS):
+            el = grid[x][y]
+            if el != EMPTY:
+                counts[el] = counts.get(el, 0) + 1
+    top = sorted(counts.items(), key=lambda kv: -kv[1])[:10]
+    ox, oy = WIDTH - 200, 220
+    pygame.draw.rect(screen, (8, 8, 20), pygame.Rect(ox-4, oy-4, 196, len(top)*18+12), border_radius=6)
+    pygame.draw.rect(screen, (60, 60, 120), pygame.Rect(ox-4, oy-4, 196, len(top)*18+12), width=1, border_radius=6)
+    ht = font.render("Element Counts", True, hx('#c0c8e0'))
+    screen.blit(ht, (ox, oy-2))
+    oy += 18
+    for el, cnt in top:
+        col = COLORS.get(el, hx('#888888'))
+        pygame.draw.rect(screen, col, pygame.Rect(ox, oy+2, 10, 10), border_radius=2)
+        nm = NAMES.get(el, '?')
+        txt = font.render(f"{nm:<12} {cnt:>5}", True, hx('#a0b0d0'))
+        screen.blit(txt, (ox+14, oy))
+        oy += 16
 
 def draw_sidebar():
     global sidebar_scroll, _sidebar_filtered
@@ -3586,6 +3828,7 @@ def _clear_world():
             oxy[x][y]=1.0; pressure[x][y]=0.0
 
 def gen_desert():
+    global current_biome; current_biome = 'desert'
     _clear_world()
     s=random.uniform(0,10); h=_gen_heights(0.62,0.10,0.04,s)
     for x in range(COLS):
@@ -3620,6 +3863,7 @@ def gen_desert():
             _sp(hxc+i-2,h[hxc]-1,HUMAN,kn=random.randint(600,800))
 
 def gen_plains():
+    global current_biome; current_biome = 'plains'
     _clear_world()
     s=random.uniform(0,10); h=_gen_heights(0.60,0.06,0.025,s)
     for x in range(COLS):
@@ -3665,6 +3909,7 @@ def gen_plains():
             if inb(fx,gh-1) and grid[fx][gh-1]==EMPTY: grid[fx][gh-1]=WHEAT
 
 def gen_forest():
+    global current_biome; current_biome = 'forest'
     _clear_world()
     s=random.uniform(0,10); h=_gen_heights(0.58,0.07,0.03,s)
     for x in range(COLS):
@@ -3700,6 +3945,7 @@ def gen_forest():
     for _ in range(4):  _sp(random.randint(5,COLS-5),h[random.randint(5,COLS-5)]-1,SNAKE)
 
 def gen_ocean():
+    global current_biome; current_biome = 'ocean'
     _clear_world()
     s=random.uniform(0,10); h=_gen_heights(0.82,0.05,0.03,s)
     wl=int(ROWS*0.55)
@@ -3734,6 +3980,7 @@ def gen_ocean():
     for _ in range(6):  _sp(random.randint(5,COLS-5),random.randint(wl+3,ROWS-5),JELLYFISH)
 
 def gen_mountains():
+    global current_biome; current_biome = 'mountains'
     _clear_world()
     s=random.uniform(0,10); h=_gen_heights(0.45,0.30,0.03,s)
     snow_line=int(ROWS*0.30)
@@ -3765,6 +4012,7 @@ def gen_mountains():
         if inb(mc-4,gh-1): grid[mc-4][gh-1]=FIRE; life[mc-4][gh-1]=120; temp_g[mc-4][gh-1]=500.0
 
 def gen_swamp():
+    global current_biome; current_biome = 'swamp'
     _clear_world()
     s=random.uniform(0,10); h=_gen_heights(0.65,0.04,0.05,s)
     wl=int(ROWS*0.68)
@@ -3795,6 +4043,7 @@ def gen_swamp():
     for _ in range(6):  _sp(random.randint(5,COLS-5),h[random.randint(5,COLS-5)]-1,BIRD)
 
 def gen_civilization():
+    global current_biome; current_biome = 'civilization'
     _clear_world()
     s=random.uniform(0,10); h=_gen_heights(0.60,0.04,0.02,s)
     for x in range(COLS):
@@ -3845,6 +4094,31 @@ _PRESETS = [
 ]
 _preset_rects = []   # filled by draw_home
 
+def word_wrap(surface, text, font, color, x, y, max_w):
+    """Render text word-wrapped within max_w pixels. Returns final y position."""
+    words = text.replace('\n', ' \n ').split(' ')
+    line = ''
+    ly = y
+    for w in words:
+        if w == '\n':
+            if line:
+                s = font.render(line.strip(), True, color)
+                surface.blit(s, (x, ly))
+                ly += s.get_height() + 2
+                line = ''
+            continue
+        test = line + w + ' '
+        if font.size(test)[0] > max_w and line:
+            s = font.render(line.strip(), True, color)
+            surface.blit(s, (x, ly))
+            ly += s.get_height() + 2
+            line = ''
+        line += w + ' '
+    if line.strip():
+        s = font.render(line.strip(), True, color)
+        surface.blit(s, (x, ly))
+    return ly
+
 def draw_home():
     global _preset_rects
     screen.fill(hx('#030609'))
@@ -3885,10 +4159,8 @@ def draw_home():
         # Name
         nt=font.render(name,True,hx('#ffffff') if hover else hx('#d0ddf0'))
         screen.blit(nt,(cx+52,cy+14))
-        # Description lines
-        for li,dline in enumerate(desc.split('\n')):
-            dt=sfont.render(dline,True,hx('#8090a8'))
-            screen.blit(dt,(cx+12,cy+54+li*20))
+        # Description (word-wrapped to fit card)
+        word_wrap(screen, desc, sfont, hx('#8090a8'), cx+12, cy+54, CARD_W - 24)
     # Controls hint at bottom
     hint=sfont.render("Left Click = Draw  |  Right Click = Erase  |  R=Rain  T=Storm  P=Pause  C=Clear",
                       True,hx('#404858'))
@@ -3918,13 +4190,16 @@ def place(nx, ny):
     elif cur_el == URANIUM:  temp_g[nx][ny]=temperature+20.0
     elif cur_el == HYDROGEN: life[nx][ny]=random.randint(150,400)
     elif cur_el == HELIUM:   life[nx][ny]=random.randint(200,500)
-    elif cur_el in (BIRD,FISH,PREDATOR,HUMAN,TIGER,LION,WHALE,DOLPHIN):
+    elif cur_el in (BIRD,FISH,PREDATOR,HUMAN,TIGER,LION,WHALE,DOLPHIN,
+                    BEAR,SNAKE,RABBIT,SPIDER,BEE,FROG):
         gene[nx][ny]=make_genes(); life[nx][ny]=random.choice([-1,1]); data[nx][ny]=0
         if cur_el==WHALE: life[nx][ny]=200  # start with full breath
+        if cur_el==HUMAN:
+            gene[nx][ny]['knowledge']=720; gene[nx][ny]['blocks']=5; gene[nx][ny]['mine_cd']=0
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
 running=True; drawing=False; erase=False; home=True
-UI_W=514; UI_H=206
+UI_W=514; UI_H=228
 
 while running:
     frame_t += 1
@@ -4021,18 +4296,59 @@ while running:
             elif ev.key==pygame.K_a: trigger_acid_rain()
             elif ev.key==pygame.K_w: clear_weather()
             elif ev.key==pygame.K_p: toggle_pause()
+            elif ev.key==pygame.K_v: trigger_eruption()
+            elif ev.key==pygame.K_q: trigger_sandstorm()
+            elif ev.key==pygame.K_g: show_grid=not show_grid
+            elif ev.key==pygame.K_TAB: show_stats=not show_stats
+            elif ev.key==pygame.K_COMMA: day_slower()
+            elif ev.key==pygame.K_PERIOD: day_faster()
+            elif ev.key==pygame.K_LEFTBRACKET: speed_down()
+            elif ev.key==pygame.K_RIGHTBRACKET: speed_up()
+            elif ev.key==pygame.K_F12:
+                import os
+                fname = os.path.join(os.path.expanduser("~"), f"sandbox_{frame_t}.png")
+                pygame.image.save(screen, fname)
+            elif ev.key==pygame.K_F11: toggle_fullscreen()
+            # Hotbar: 1-9 keys
+            elif ev.key in (pygame.K_1,pygame.K_2,pygame.K_3,pygame.K_4,pygame.K_5,
+                            pygame.K_6,pygame.K_7,pygame.K_8,pygame.K_9):
+                idx = ev.key - pygame.K_1
+                if idx < len(hotbar): cur_el = hotbar[idx]
+            # CTRL+Z undo
+            elif ev.key==pygame.K_z and (pygame.key.get_mods() & pygame.KMOD_CTRL):
+                for ux,uy,uel,uli,uda,uge in reversed(_undo_buf):
+                    if inb(ux,uy):
+                        grid[ux][uy]=uel; life[ux][uy]=uli
+                        data[ux][uy]=uda; gene[ux][uy]=uge
+                _undo_buf.clear()
 
     if home:
         draw_home(); pygame.display.flip(); clock.tick(FPS); continue
 
     # Drawing
+    # Track stroke start for undo
+    if not drawing and _in_stroke:
+        globals()['_in_stroke'] = False
+    if drawing:
+        globals()['_in_stroke'] = True
     if drawing and not(mp[0]<UI_W and mp[1]<UI_H) and not(sidebar_open and mp[0]>=WIDTH-SIDEBAR_W):
         smx = (mp[0] - cam_offset_x) / (CELL * zoom_level)
         smy = (mp[1] - cam_offset_y) / (CELL * zoom_level)
         gx=int(smx); gy=int(smy)
         # Scale brush by zoom so it covers the same screen area regardless of zoom
         eff_brush = max(1, round(brush / max(0.3, zoom_level)))
-        if not erase and cur_el in ANIMAL_TYPES:
+        # ── Gift to human: if hovering directly over a HUMAN cell and the
+        #    selected element is something giftable, give it instead of placing.
+        if (not erase and cur_el in _GIVEABLE_TO_HUMAN
+                and inb(gx, gy) and grid[gx][gy] == HUMAN):
+            if not _placed_animal:
+                txt, col = _give_to_human(gx, gy, cur_el)
+                if txt:
+                    sx = int(gx * CELL * zoom_level) + cam_offset_x
+                    sy = int(gy * CELL * zoom_level) + cam_offset_y
+                    _gift_msgs.append([sx, sy - 4, txt, col, 80])
+                _placed_animal = True   # one gift per click
+        elif not erase and cur_el in ANIMAL_TYPES:
             # Animals spawn one per click — place only at cursor centre
             if not _placed_animal and inb(gx,gy) and (grid[gx][gy] in (EMPTY,AIR) or grid[gx][gy] in LIQUIDS):
                 place(gx,gy); _placed_animal=True
@@ -4042,13 +4358,37 @@ while running:
                     if dx*dx+dy*dy<=eff_brush*eff_brush:
                         nx,ny=gx+dx,gy+dy
                         if inb(nx,ny):
-                            if erase: grid[nx][ny]=EMPTY; life[nx][ny]=0; data[nx][ny]=0; gene[nx][ny]=None
+                            if erase:
+                                _undo_buf.append((nx,ny,grid[nx][ny],life[nx][ny],data[nx][ny],gene[nx][ny]))
+                                grid[nx][ny]=EMPTY; life[nx][ny]=0; data[nx][ny]=0; gene[nx][ny]=None
                             elif (grid[nx][ny] in (EMPTY,AIR)
                                   or grid[nx][ny] in LIQUIDS
                                   or cur_el in (STONE,WOOD,GLASS,CONCRETE)):
                                 place(nx,ny)
 
-    if not paused: update_grid()
+    fps_val = clock.get_fps()
+    if not paused:
+        for _st in range(sim_speed):
+            update_grid()
+
+    # ── Biome-specific random weather auto-trigger (every ~720 ticks) ────────
+    if frame_t % 720 == 0 and not home and not any([
+            raining, snowing, storming, blizzard, fog_on,
+            heatwave, acid_rain, eruption_on, sandstorm, tornado_on]):
+        _bprobs = _BIOME_WEATHER.get(current_biome, {})
+        _wfns = {
+            'rain': toggle_rain, 'snow': toggle_snow, 'storm': trigger_storm,
+            'blizzard': trigger_blizzard, 'fog': trigger_fog,
+            'heatwave': trigger_heatwave, 'acid_rain': trigger_acid_rain,
+            'tornado': trigger_tornado, 'sandstorm': trigger_sandstorm,
+            'eruption': trigger_eruption,
+        }
+        _r = random.random(); _cum = 0.0
+        for _wn, _wp in _bprobs.items():
+            _cum += _wp
+            if _r < _cum:
+                _wfns.get(_wn, lambda: None)()
+                break
 
     day_timer=(day_timer+1)%DAY_LEN
     sun_ang=(day_timer/DAY_LEN)*2*math.pi
@@ -4059,7 +4399,53 @@ while running:
     render_grid()
     draw_animal_sprites()
     draw_tornado_overlay()
+
+    # ── Gift cursor glow: highlight human under cursor when a giftable is selected
+    if not home and cur_el in _GIVEABLE_TO_HUMAN:
+        _hmp = pygame.mouse.get_pos()
+        _hgx = int((_hmp[0] - cam_offset_x) / (CELL * zoom_level))
+        _hgy = int((_hmp[1] - cam_offset_y) / (CELL * zoom_level))
+        if inb(_hgx, _hgy) and grid[_hgx][_hgy] == HUMAN:
+            _hsx = int(_hgx * CELL * zoom_level) + cam_offset_x
+            _hsy = int(_hgy * CELL * zoom_level) + cam_offset_y
+            _hcell = max(4, int(CELL * zoom_level))
+            # Pulsing gold ring around the human
+            _gpulse = int(18 * abs(math.sin(frame_t * 0.12))) + 8
+            _gcol = (255, min(255, 180 + _gpulse), 20)
+            pygame.draw.rect(screen, _gcol,
+                             pygame.Rect(_hsx-2, _hsy-2, _hcell+4, _hcell+4), 2, border_radius=3)
+            # Show item name above as a tooltip
+            _ename = NAMES.get(cur_el, '?')
+            _etip = sfont.render(f"Give: {_ename}", True, _gcol)
+            _etx = _hsx + _hcell // 2 - _etip.get_width() // 2
+            _ety = _hsy - _etip.get_height() - 4
+            _ebg = pygame.Rect(_etx - 3, _ety - 1, _etip.get_width() + 6, _etip.get_height() + 2)
+            pygame.draw.rect(screen, (8, 8, 20), _ebg, border_radius=3)
+            pygame.draw.rect(screen, _gcol, _ebg, width=1, border_radius=3)
+            screen.blit(_etip, (_etx, _ety))
+
+    # ── Floating gift messages ─────────────────────────────────────────────────
+    dead_msgs = []
+    for i, msg in enumerate(_gift_msgs):
+        sx2, sy2, txt2, col2, fl = msg
+        if fl <= 0:
+            dead_msgs.append(i)
+            continue
+        alpha = min(255, fl * 4)
+        fade_surf = sfont.render(txt2, True, col2)
+        # Drift upward
+        msg[1] -= 1
+        msg[4] -= 1
+        # Fake alpha by blending toward background (approximate)
+        fa = fl / 80.0
+        draw_col = (int(col2[0]*fa), int(col2[1]*fa), int(col2[2]*fa))
+        ts3 = sfont.render(txt2, True, draw_col if fa < 0.3 else col2)
+        screen.blit(ts3, (sx2 - ts3.get_width()//2, msg[1]))
+    for i in reversed(dead_msgs):
+        _gift_msgs.pop(i)
+
     draw_ui()
+    if show_stats: draw_stats_overlay()
     if sidebar_open: draw_sidebar()
 
     pygame.display.flip()
